@@ -1,12 +1,7 @@
 Django==1.7.2
-django-auth-ldap==1.2.4
 djangorestframework==3.0.2
-lxml==3.4.1
 pexpect==3.3
-pkg-resources==0.0.0
 pycrypto==2.6.1
-pylibmc==1.4.1
-python-ldap==2.4.19
 requests==2.5.1
 Twisted==15.0.0
 zope.interface==4.1.2

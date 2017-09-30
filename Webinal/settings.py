@@ -68,8 +68,12 @@ DATABASES = {
 
 TEMP_DIR = "/tmp"
 
-IMPERSONATOR_KEY = "/srv/Webinal/impersonator/pub.key"
-IMPERSONATOR_URL = "127.0.0.1:8124"
+PYTHON_VENV = "/home/david/venv/bin/python"
+
+IMPERSONATOR = {
+    'endpoint': '127.0.0.1:31000',
+    'auth_mode': 'none'
+}
 
 # Internationalization
 # https://docs.djangoproject.com/en/1.7/topics/i18n/

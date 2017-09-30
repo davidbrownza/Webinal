@@ -10,17 +10,19 @@ import pexpect, base64, requests
 
 class LinuxBackend(ModelBackend):
     
-    key_file = settings.IMPERSONATOR_KEY
-    imp_url = settings.IMPERSONATOR_URL
+    endpoint = settings.IMPERSONATOR['endpoint']
+    mode = settings.IMPERSONATOR['auth_mode']
     
-    def authenticate(self, username=None, password=None):
-        
+    def authenticate(self, username=None, password=None):        
         # get the user if it exists; if it doesn't exist, create the user
         user = None
         try:
             user = User.objects.get(username=username)
         except User.DoesNotExist, ex:
             user = User.objects.create(username=username, email="", password=password)
+        
+        if self.mode == 'none':
+            return user
         
         # encrypt and encode password for transmission and to store in DB
         encoded = ""
@@ -43,5 +45,5 @@ class LinuxBackend(ModelBackend):
        
     def linux_auth(self, encoded):
         data = "%s\n%s" % (encoded, "whoami")
-        r = requests.post("http://%s/impersonate" % self.imp_url, data=data)
+        r = requests.post("http://%s" % self.endpoint, data=data)
         return r.status_code == requests.codes.ok

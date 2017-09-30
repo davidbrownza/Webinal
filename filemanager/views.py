@@ -17,12 +17,16 @@ from utilities.security.cryptography import PubPvtKey
 
 #Global variables and functions
 PROJECT_PATH = settings.BASE_DIR
-VIRTUAL_ACTIVATE = os.path.join(PROJECT_PATH, "venv/bin/activate")
    
 def RunUserProcess(user, command):
-    payload = "%s\n%s" % (user.filemanagersettings.ServerPass, command)
-    r = requests.post("http://%s/impersonate" % settings.IMPERSONATOR_URL, data=payload)
-    return r.text
+    payload = { 'command': command }
+    headers = { 'content-type': 'application/json' }
+    r = requests.post(
+        "http://%s" % settings.IMPERSONATOR['endpoint'], 
+        data=json.dumps(payload),
+        headers=headers
+    )
+    return r.json()['out']
 
 
     
@@ -46,7 +50,7 @@ def ACLResponse(response):
 
 
 def GetFileStat(user, path):
-    statinfo = RunUserProcess(user, "python %s/manage.py acl STAT %s" % (PROJECT_PATH, path)).split()
+    statinfo = RunUserProcess(user, "%s '%s/manage.py' acl STAT %s" % (settings.PYTHON_VENV, PROJECT_PATH, path)).split()
     return statinfo
 
 
@@ -60,7 +64,7 @@ class DirectoryDetail(APIView):
         Get directory path and listing details for given path
         """           
         path = request.GET.get("path", os.path.abspath(os.path.sep))
-        out = RunUserProcess(request.user, "python %s/manage.py acl GET_DIR '%s'" % (PROJECT_PATH, path))
+        out = RunUserProcess(request.user, "%s '%s/manage.py' acl GET_DIR '%s'" % (settings.PYTHON_VENV, PROJECT_PATH, path))
         return ACLResponse(out) 
             
             
@@ -73,7 +77,7 @@ class Operation(APIView):
         Create file or directory
         """
         try:
-            out = RunUserProcess(request.user, "python %s/manage.py acl CREATE '%s' '%s' %s" % (PROJECT_PATH, request.POST["name"], request.POST["fullpath"], request.POST["type"]))
+            out = RunUserProcess(request.user, "%s '%s/manage.py' acl CREATE '%s' '%s' %s" % (settings.PYTHON_VENV, PROJECT_PATH, request.POST["name"], request.POST["fullpath"], request.POST["type"]))
             return ACLResponse(out)
         
         except Exception, ex:
@@ -89,7 +93,7 @@ class Operation(APIView):
             dir_dict.__dict__ = json.loads(request.body)
             
             op = op.upper()
-            cmd = "python %s/manage.py acl %s '%s' '%s' %s" % (PROJECT_PATH, op, dir_dict.name, dir_dict.fullpath, dir_dict.type)
+            cmd = "%s '%s/manage.py' acl %s '%s' '%s' %s" % (settings.PYTHON_VENV, PROJECT_PATH, op, dir_dict.name, dir_dict.fullpath, dir_dict.type)
             
             if op != "RENAME":
                 cmd += " %s" % dir_dict.destination
@@ -108,7 +112,7 @@ class Operation(APIView):
         """       
         try:
             delete = QueryDict(request.body)
-            cmd = "python %s/manage.py acl DELETE '%s' '%s' %s" % (PROJECT_PATH, delete["name"], delete["fullpath"], delete["type"])
+            cmd = "%s '%s/manage.py' acl DELETE '%s' '%s' %s" % (settings.PYTHON_VENV, PROJECT_PATH, delete["name"], delete["fullpath"], delete["type"])
             out = RunUserProcess(request.user, cmd)
             
             return ACLResponse(out)
@@ -157,7 +161,7 @@ class FileDetail(APIView):
             else:
                 tmp_dir = CreateTempDir(request.user.username)
                 
-                cmd = "python %s/manage.py acl CREATE_TEMP_FILE '%s' '%s'" % (PROJECT_PATH, filepath, os.path.join(tmp_dir, os.path.basename(filepath)))  
+                cmd = "%s '%s/manage.py' acl CREATE_TEMP_FILE '%s' '%s'" % (settings.PYTHON_VENV, PROJECT_PATH, filepath, os.path.join(tmp_dir, os.path.basename(filepath)))  
                 out = RunUserProcess(request.user, cmd)
                 
                 tmp_file = out.strip().strip("\r").strip("\n") 
@@ -204,7 +208,7 @@ class FileDetail(APIView):
             with open(temp, 'w') as f:
                 f.write(contents.encode('utf-8'))
             
-            cmd = "python %s/manage.py acl OVERWRITE_FILE '%s' '%s'" % (PROJECT_PATH, path, temp)             
+            cmd = "%s '%s/manage.py' acl OVERWRITE_FILE '%s' '%s'" % (settings.PYTHON_VENV, PROJECT_PATH, path, temp)             
             out = RunUserProcess(request.user, cmd)
             
             if not out.startswith("ERROR:\n\n"):
@@ -238,7 +242,7 @@ class FileTransfer(APIView):
                           
             tmp_dir = CreateTempDir(request.user.username)
             
-            cmd = "python %s/manage.py acl CREATE_TEMP_FILE '%s' '%s'" % (PROJECT_PATH, filepath, os.path.join(tmp_dir, os.path.basename(filepath)))          
+            cmd = "%s '%s/manage.py' acl CREATE_TEMP_FILE '%s' '%s'" % (settings.PYTHON_VENV, PROJECT_PATH, filepath, os.path.join(tmp_dir, os.path.basename(filepath)))          
             out = RunUserProcess(request.user, cmd)
             
             tmp_file = out.strip().strip("\\r").strip("\r").strip("\n")              
@@ -277,7 +281,7 @@ class FileTransfer(APIView):
                 os.chmod(tmp_path, 0775)
                 
                 #move from temporary location to new location
-                cmd = "python %s/manage.py acl MOVE '%s' '%s' %s '%s'" % (PROJECT_PATH, f.name, tmp_path, 'file', path)
+                cmd = "%s '%s/manage.py' acl MOVE '%s' '%s' %s '%s'" % (settings.PYTHON_VENV, PROJECT_PATH, f.name, tmp_path, 'file', path)
                 out = RunUserProcess(request.user, cmd)
                 
                 #append any errors that occur to output

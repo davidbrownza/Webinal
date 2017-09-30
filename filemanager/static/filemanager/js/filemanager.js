@@ -11,6 +11,17 @@ function Tab(file) {
     self.file = ko.observable(file);
     self.file_content = ko.observable();
     self.type = ko.observable();
+    self.last_saved = ko.observable();
+    
+    self.saving = ko.observable(false);
+    self.save_timeout = -1;
+    self.saved = ko.observable(null);
+    self.saved.subscribe(function(){fe
+        self.save_timeout = setTimeout(function(){
+            self.saved(null);
+            self.save_timeout = -1;
+        }, 5000)
+    });
     
     self.tab_class = ko.observable();
     self.display = ko.observable();
@@ -23,6 +34,8 @@ function Tab(file) {
     self.make_editor = function(textarea) {      
             
         var modelist = ace.require('ace/ext/modelist');
+        var langauge_tools = ace.require("ace/ext/language_tools");
+        
         self.mode = modelist.getModeForPath(self.file().name()).mode;
         var editDiv = $('<div>', {
             position: 'absolute',
@@ -37,7 +50,10 @@ function Tab(file) {
         self.editor.setAutoScrollEditorIntoView(true);
         self.editor.setTheme("ace/theme/" + webinal.filemanager_settings().theme()); 
         self.editor.setOptions({
-          fontSize: webinal.filemanager_settings().font_size() + "pt"
+            fontSize: webinal.filemanager_settings().font_size() + "pt",
+            enableBasicAutocompletion: true,
+            enableSnippets: true,
+            enableLiveAutocompletion: true
         });                 
         
         self.editor.getSession().on('change', function(){
@@ -56,6 +72,7 @@ var FileManagerViewModel = function() {
     self.selected_tab = ko.observable();
     self.clipboard = ko.observable();
     self.errors = ko.observableArray();
+    self.go_path = ko.observable();
     
     self.file_menu = ko.observableArray([
         { 
@@ -67,6 +84,9 @@ var FileManagerViewModel = function() {
         }, {
             text: "<i class='fa fa-edit'></i> Rename",
             action: function(data) { self.showRenameModal(data); }
+        }, {
+            text: "<i class='fa fa-tags'></i> Copy Location",
+            action: function(data) { self.copyPath(data); }
         }, {
             separator: true
         }, {
@@ -84,7 +104,7 @@ var FileManagerViewModel = function() {
             separator: true
         }, {
             text: "<i class='fa fa-sliders'></i> Properties",
-            action: function(data) { self.delete(data) }
+            action: function(data) {  }
         }     
     ]);
         
@@ -95,6 +115,9 @@ var FileManagerViewModel = function() {
         }, {
             text: "<i class='fa fa-edit'></i> Rename",
             action: function(data) { self.showRenameModal(data); }
+        }, {
+            text: "<i class='fa fa-tags'></i> Copy Location",
+            action: function(data) { self.copyPath(data); }
         }, {
             separator: true
         }, {
@@ -113,7 +136,7 @@ var FileManagerViewModel = function() {
             separator: true
         }, {
             text: "<i class='fa fa-sliders'></i> Properties",
-            action: function(data) { self.delete(data) }
+            action: function(data) {  }
         }    
     ]);
     
@@ -133,6 +156,16 @@ var FileManagerViewModel = function() {
                 }
                 
                 self.getDirectory(path);
+            }
+        }, {
+            text: "<i class='fa fa-tags'></i> Copy Location",
+            action: function(data) { 
+                self.copyPath(data.file()); 
+            }
+        }, {
+            text: "<i class='fa fa-refresh'></i> Reload",
+            action: function(data) { 
+                self.reloadFile(data); 
             }
         }, {
             separator: true
@@ -178,6 +211,13 @@ var FileManagerViewModel = function() {
             success: function() {
                 self.reloadDirectory();
                 $("#create-modal").modal('hide');
+                
+                //if the created object is a file, open it
+                if(self.new_directory_object().type() == "file") {
+                    file_path = self.new_directory_object().fullpath() + "/" + self.new_directory_object().name()
+                    self.new_directory_object().fullpath(file_path)
+                    self.getFile(self.new_directory_object());
+                }
             },
             error: function(http) {
                 self.create_error().error(true);
@@ -189,8 +229,19 @@ var FileManagerViewModel = function() {
         });
     }
     
+    self.copyPath = function(dir_obj) {
+        var clipboard = $('#clipboard');
+        clipboard.val(dir_obj.fullpath());
+        clipboard.select();
+        try {
+            var successful = document.execCommand('copy');
+            var msg = successful ? 'successful' : 'unsuccessful';
+            console.log('Copying text command was ' + msg);
+        } catch (err) {
+            console.log('Oops, unable to copy');
+        }
+    }
     
-    self.savingTab = ko.observable(false);
     self.uploading = ko.observable(false);
     self.upload_error = ko.observable(new ErrorMessage());
     self.upload_path = ko.observable();    
@@ -205,6 +256,14 @@ var FileManagerViewModel = function() {
         $("form#upload").submit();
     }
     
+    self.goToDirectory = function(d, e) {
+        if(e.keyCode === 13) {
+            $("#search_box").blur();
+            self.getDirectory(self.go_path());
+            $("#search_box").focus();
+        }
+        return true
+    }
     
     self.getDirectory = function(path){
     
@@ -264,16 +323,42 @@ var FileManagerViewModel = function() {
     
     
     self.getFile = function(data) {
-        var url = "/files/file?path=" + data.fullpath();
+        //check if file is already open
+        var open = false;
+        $.each(self.tabs(), function(i, tab) {
+            if(tab.file().fullpath() == data.fullpath()) {
+                self.selectTab(tab);
+                open = true;
+                return false;
+            }
+        });
         
+        //if file not already open, fetch file
+        if(!open) {              
+            var tab = new Tab(data); 
+            self.tabs.push(tab);
+            self.selectTab(tab);
+            self.fetchFile(data, tab);
+        }
+    }
+    
+    
+    self.reloadFile = function(data) {
+        data.saving(true);
+        self.fetchFile(data.file(), data);
+    }
+    
+    
+    self.fetchFile = function(data, tab) {
+        tab.saving(true);
+        
+        var url = "/files/file?path=" + data.fullpath();
+            
         //send a HEAD request to check the content type of the file
         $.ajax({
             url: url,
             type: "HEAD",
-            success: function(result, status, xhr){                
-                var tab = new Tab(data);  
-                self.tabs.push(tab);
-                self.selectTab(tab);
+            success: function(result, status, xhr){   
                 
                 //do something based on the content type
                 var ct = xhr.getResponseHeader("content-type");
@@ -283,7 +368,7 @@ var FileManagerViewModel = function() {
                     var img = new Image();
                     img.src = url;
                     img.className = "tab-image";
-                    $("#tab_" + tab.id()).append(img);
+                    $("#tab_content_" + tab.id()).html(img);
                 } else if (ct == "application/pdf") {
                     tab.type("pdf");
                     
@@ -292,32 +377,37 @@ var FileManagerViewModel = function() {
                     pdf.value = "Adobe Reader is required for Internet Explorer."
                     pdf.data = url;
                     pdf.className = "tab-pdf";
-                    $("#tab_" + tab.id()).append(pdf);
+                    $("#tab_content_" + tab.id()).html(pdf);
                 } else if(ct.startsWith("video")) {
                     tab.type("video");
                     
                     var video = "<video class='tab-video' controls>";
                     video += "<source src='" + url + "' />";
                     video += "</video>"
-                    $("#tab_" + tab.id()).append(video);
+                    $("#tab_content_" + tab.id()).html(video);
                 } else if(ct.startsWith("audio")) {
                     tab.type("audio");
                     
                     var audio = "<audio class='tab-audio' controls>";
                     audio += "<source src='" + url + "' />";
                     audio += "</audio>"
-                    $("#tab_" + tab.id()).append(audio);
+                    $("#tab_content_" + tab.id()).html(audio);
                 } else { 
                     $.ajax({
                         url: url,
-                        success: function(result) {
+                        success: function(result, textStatus, request) {
                             tab.type("text");
-                            tab.file_content(result);
+                            
+                            if (ct == "application/json") {
+                                result = JSON.stringify(result, null, 4);
+                            }
+                            
+                            tab.last_saved(request.getResponseHeader('File-Modified'));
                     
                             var txt = document.createElement("textarea");
                             txt.value = result;
                             txt.className = "tab-text";
-                            $("#tab_" + tab.id()).append(txt);
+                            $("#tab_content_" + tab.id()).html(txt);
                             
                             tab.make_editor($(txt));
                         }
@@ -326,8 +416,11 @@ var FileManagerViewModel = function() {
             },
             error: function(http) {
                 self.addError(http.responseText);
+            },
+            complete: function() {
+                tab.saving(false);
             }
-        });        
+        }); 
     }
     
     
@@ -431,14 +524,21 @@ var FileManagerViewModel = function() {
     }
     
     self.saveFile = function(data) {
-        self.savingTab(true);
+        data.saving(true);
         if(data.type() == "text") {
             $.ajax({
                 url: "/files/file",
                 type: "POST",
                 data: { path: data.file().fullpath(), contents: data.file_content() },
-                success: function() {
-                    self.savingTab(false);
+                success: function(mtime) {
+                    data.last_saved(mtime);
+                    data.saving(false);
+                    data.saved(true);
+                },
+                error: function(http) {
+                    data.saving(false);
+                    data.saved(false);
+                    self.addError(http.responseText);
                 }
             });
         } else {
@@ -460,8 +560,37 @@ var FileManagerViewModel = function() {
     }
     
     
-    self.closeTab =function(data){
+    self.closeTab = function(data){
         self.tabs.remove(data);
+        
+        var url = "/files/file?path=" + data.file().fullpath();
+        
+        $.ajax({
+            url: url,
+            type: "DELETE",
+            success: function() {
+            },
+            error: function(http) {
+                self.addError(http.responseText);
+            }
+        });
+    }
+    
+    
+    self.getTabs = function() {
+        $.ajax({
+            url: "/files/tabs",
+            success: function(tabs) {
+                $.each(tabs, function(i, tab){
+                    var name = tab.FilePath.split('/').pop()
+                    var d = new DirectoryObject(name, tab.FilePath, "text")
+                    self.getFile(d);
+                });
+            },
+            error: function(http) {
+                self.addError(http.responseText);
+            }
+        });
     }
     
     
@@ -550,26 +679,31 @@ $("form#upload").submit(function(){
 $(window).bind('keydown', function(event) {
     if (event.ctrlKey || event.metaKey) {
         switch (String.fromCharCode(event.which).toLowerCase()) {
-            case 's':
-                event.preventDefault();
-                
-                var success = false;
-                $.each(filemanager.tabs(), function(index, tab) {
-                    if(tab.tab_class() == "active") {
-                        filemanager.saveFile(tab);
-                        success = true;
-                        return false;
-                    }
-                });
-                
-                if(!success) {
-                   filemanager.addError("There was no active page to save.");
+        case 's':
+            event.preventDefault();
+            
+            var success = false;
+            $.each(filemanager.tabs(), function(index, tab) {
+                if(tab.tab_class() == "active") {
+                    filemanager.saveFile(tab);
+                    success = true;
+                    return false;
                 }
-                    
-                break;
+            });
+            
+            if(!success) {
+               filemanager.addError("There was no active page to save.");
+            }
+                
+            break;
         }
     }
 });
         
 var filemanager = new FileManagerViewModel();
 ko.applyBindings(filemanager, document.getElementById("page-container"));
+
+
+$(function() {
+    filemanager.getTabs();
+});
