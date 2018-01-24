@@ -18,19 +18,24 @@ from utilities.security.cryptography import PubPvtKey
 #Global variables and functions
 PROJECT_PATH = settings.BASE_DIR
 
-def RunUserProcess(user, command):
-    payload = { 'token': user.token, command': command }
+def run_process(user, command):
+    payload = { 'token': user.Credentials.Token, 'command': command }
     headers = { 'content-type': 'application/json' }
-    r = requests.post(
+
+    response = requests.post(
         "http://%s" % settings.IMPERSONATOR['endpoint'],
         data=json.dumps(payload),
         headers=headers
-    )
-    return r.json()['out']
+    ).json()
+
+    return response['out'], response['err'], response['code']
+
+def get_response(out, err, code):
+    response, status = (out, 200) if code == 0 else (err, 500)
+    return Response(response, status=status)
 
 
-
-def CreateTempDir(username):
+def create_tmp_dir(username):
     tmp_dir = os.path.join(settings.TEMP_DIR, "." + username)
     if not os.path.exists(tmp_dir):
         os.makedirs(tmp_dir)
@@ -38,22 +43,9 @@ def CreateTempDir(username):
     return tmp_dir
 
 
-
-def ACLResponse(response):
-    if response.startswith("ERROR:"):
-        #remove the first 3 lines and convert to html by replacing newlines with <br/> and removing return carriages
-        response_lines = response.split('\n')[2:]
-        response = '<br/>'
-            .join(response_lines)
-            .replace('\r', '')
-        return Response(response, status=400)
-    else:
-        return Response(response)
-
-
-
-def GetFileStat(user, path):
-    statinfo = RunUserProcess(user, "%s '%s/manage.py' acl STAT %s" % (settings.PYTHON_VENV, PROJECT_PATH, path)).split()
+def get_file_stat_info(user, path):
+    command = "%s '%s/manage.py' acl STAT %s" % (settings.PYTHON_VENV, PROJECT_PATH, path)
+    statinfo = run_process(user, command).split()
     return statinfo
 
 
@@ -67,8 +59,9 @@ class DirectoryDetail(APIView):
         Get directory path and listing details for given path
         """
         path = request.GET.get("path", os.path.abspath(os.path.sep))
-        out = RunUserProcess(request.user, "%s '%s/manage.py' acl GET_DIR '%s'" % (settings.PYTHON_VENV, PROJECT_PATH, path))
-        return ACLResponse(out)
+        out, err, code = run_process(request.user, "%s '%s/manage.py' acl GET_DIR '%s'" % (settings.PYTHON_VENV, PROJECT_PATH, path))
+
+        return get_response(out, err, code)
 
 
 
@@ -79,33 +72,25 @@ class Operation(APIView):
         """
         Create file or directory
         """
-        try:
-            out = RunUserProcess(request.user, "%s '%s/manage.py' acl CREATE '%s' '%s' %s" % (settings.PYTHON_VENV, PROJECT_PATH, request.POST["name"], request.POST["fullpath"], request.POST["type"]))
-            return ACLResponse(out)
-
-        except Exception, ex:
-            return Response(str(ex), status=400)
+        out, err, code = run_process(request.user, "%s '%s/manage.py' acl CREATE '%s' '%s' %s" % (settings.PYTHON_VENV, PROJECT_PATH, request.POST["name"], request.POST["fullpath"], request.POST["type"]))
+        return get_response(out, err, code)
 
 
     def put(self, request, op):
         """
         Perform a rename, move, or copy operation on a file or directory
         """
-        try:
-            dir_dict = lambda:None
-            dir_dict.__dict__ = json.loads(request.body)
+        dir_dict = lambda:None
+        dir_dict.__dict__ = json.loads(request.body)
 
-            op = op.upper()
-            cmd = "%s '%s/manage.py' acl %s '%s' '%s' %s" % (settings.PYTHON_VENV, PROJECT_PATH, op, dir_dict.name, dir_dict.fullpath, dir_dict.type)
+        op = op.upper()
+        cmd = "%s '%s/manage.py' acl %s '%s' '%s' %s" % (settings.PYTHON_VENV, PROJECT_PATH, op, dir_dict.name, dir_dict.fullpath, dir_dict.type)
 
-            if op != "RENAME":
-                cmd += " %s" % dir_dict.destination
+        if op != "RENAME":
+            cmd += " %s" % dir_dict.destination
 
-            out = RunUserProcess(request.user, cmd)
-
-            return ACLResponse(out)
-        except Exception, ex:
-            return Response(str(ex), status=400)
+        out, err, code = run_process(request.user, cmd)
+        return get_response(out, err, code)
 
 
 
@@ -113,14 +98,10 @@ class Operation(APIView):
         """
         Delete file or directory
         """
-        try:
-            delete = QueryDict(request.body)
-            cmd = "%s '%s/manage.py' acl DELETE '%s' '%s' %s" % (settings.PYTHON_VENV, PROJECT_PATH, delete["name"], delete["fullpath"], delete["type"])
-            out = RunUserProcess(request.user, cmd)
-
-            return ACLResponse(out)
-        except Exception, ex:
-            return Response(str(ex), status=400)
+        delete = QueryDict(request.body)
+        cmd = "%s '%s/manage.py' acl DELETE '%s' '%s' %s" % (settings.PYTHON_VENV, PROJECT_PATH, delete["name"], delete["fullpath"], delete["type"])
+        out, err, code = run_process(request.user, cmd)
+        return get_response(out, err, code)
 
 
 
@@ -131,15 +112,12 @@ class FileDetail(APIView):
         """
         Delete tab at a given path
         """
-        try:
-            filepath = request.GET.get("path", os.path.abspath(os.path.sep))
+        filepath = request.GET.get("path", os.path.abspath(os.path.sep))
 
-            tab, created = Tab.objects.get_or_create(User=request.user, FilePath=filepath)
-            tab.delete()
+        tab, created = Tab.objects.get_or_create(User=request.user, FilePath=filepath)
+        tab.delete()
 
-            return Response()
-        except Exception, ex:
-            return Response("", status=400)
+        return Response()
 
 
     def get(self, request):
@@ -162,10 +140,10 @@ class FileDetail(APIView):
                 response = HttpResponse("", content_type=content_type)
                 return response
             else:
-                tmp_dir = CreateTempDir(request.user.username)
+                tmp_dir = create_tmp_dir(request.user.username)
 
                 cmd = "%s '%s/manage.py' acl CREATE_TEMP_FILE '%s' '%s'" % (settings.PYTHON_VENV, PROJECT_PATH, filepath, os.path.join(tmp_dir, os.path.basename(filepath)))
-                out = RunUserProcess(request.user, cmd)
+                out, err, code = run_process(request.user, cmd)
 
                 tmp_file = out.strip().strip("\r").strip("\n")
 
@@ -178,7 +156,7 @@ class FileDetail(APIView):
                     with open("/tmp/tab.log","w") as f:
                         print >> f, str(err)
 
-                if not out.startswith("ERROR:\n\n"):
+                if code == 0:
                     wrapper = FileWrapper(open(tmp_file, "rb"))
                     response = HttpResponse(wrapper, content_type=content_type)
                     response['File-Modified'] = last_saved
@@ -198,7 +176,7 @@ class FileDetail(APIView):
             path = request.POST["path"]
             contents = request.POST["contents"]
 
-            tmp_dir = CreateTempDir(request.user.username)
+            tmp_dir = create_tmp_dir(request.user.username)
 
             #determine path to temp file
             temp = os.path.join(tmp_dir, os.path.basename(path)) + ".tmp."
@@ -212,12 +190,12 @@ class FileDetail(APIView):
                 f.write(contents.encode('utf-8'))
 
             cmd = "%s '%s/manage.py' acl OVERWRITE_FILE '%s' '%s'" % (settings.PYTHON_VENV, PROJECT_PATH, path, temp)
-            out = RunUserProcess(request.user, cmd)
+            out, err, code = run_process(request.user, cmd)
 
-            if not out.startswith("ERROR:\n\n"):
+            if code == 0:
                 #update Tab LastSaved date
                 try:
-                    statinfo = GetFileStat(request.user, path)
+                    statinfo = get_file_stat_info(request.user, path)
 
                     tab, created = Tab.objects.get_or_create(User=request.user, FilePath=path)
                     tab.LastSaved = int(statinfo[8])
@@ -225,9 +203,10 @@ class FileDetail(APIView):
 
                     out = str(tab.LastSaved)
                 except Exception, ex:
-                    out = "ERROR:\n\nTab not saved: %s" % str(ex)
+                    err = "ERROR:\n\nTab not saved: %s" % str(ex)
+                    code = -1
 
-            return ACLResponse(out)
+            return get_response(out, err, code)
 
         except Exception, ex:
             return Response(traceback.format_exc(), status=400)
@@ -243,24 +222,24 @@ class FileTransfer(APIView):
         try:
             filepath = request.GET.get("path", os.path.abspath(os.path.sep))
 
-            tmp_dir = CreateTempDir(request.user.username)
+            tmp_dir = create_tmp_dir(request.user.username)
 
             cmd = "%s '%s/manage.py' acl CREATE_TEMP_FILE '%s' '%s'" % (settings.PYTHON_VENV, PROJECT_PATH, filepath, os.path.join(tmp_dir, os.path.basename(filepath)))
-            out = RunUserProcess(request.user, cmd)
+            out, err, code = run_process(request.user, cmd)
 
             tmp_file = out.strip().strip("\\r").strip("\r").strip("\n")
 
-            if not out.startswith("ERROR:\n\n"):
+            if code == 0:
                 wrapper = FileWrapper(open(tmp_file, "rb"))
                 response = HttpResponse(wrapper, content_type='application/force-download')
                 response['Content-Length'] = os.path.getsize(tmp_file)
                 response['Content-Disposition'] = 'attachment; filename=%s' % os.path.basename(filepath)
                 return response
             else:
-                return Response(out, status=400)
+                return get_response(out, err, code)
 
         except Exception, ex:
-            return Response(str(ex), status=400)
+            return Response(str(ex), status=500)
 
 
     def post(self, request):
@@ -270,9 +249,9 @@ class FileTransfer(APIView):
         try:
             path = request.POST["path"]
 
-            tmp_dir = CreateTempDir(request.user.username)
+            tmp_dir = create_tmp_dir(request.user.username)
 
-            output = ""
+            error = ""
 
             for f in request.FILES.getlist("files"):
                 tmp_path = os.path.join(tmp_dir, f.name)
@@ -285,16 +264,16 @@ class FileTransfer(APIView):
 
                 #move from temporary location to new location
                 cmd = "%s '%s/manage.py' acl MOVE '%s' '%s' %s '%s'" % (settings.PYTHON_VENV, PROJECT_PATH, f.name, tmp_path, 'file', path)
-                out = RunUserProcess(request.user, cmd)
+                out, err, code = run_process(request.user, cmd)
 
                 #append any errors that occur to output
-                if out.startswith("ERROR:\n\n"):
-                    output += "%s\n\n" % out
+                if code != 0:
+                    error += "%s\n\n" % err
 
-            return ACLResponse(output);
+            return Response(error)
 
         except Exception, ex:
-            return Response(str(ex), status=400)
+            return Response(str(ex), status=500)
 
 
 class SettingsDetail(APIView):
@@ -329,7 +308,7 @@ class SettingsDetail(APIView):
 
             return Response()
         except Exception, ex:
-            return Response(str(ex), status=400)
+            return Response(str(ex), status=500)
 
 
 class Tabs(APIView):
