@@ -19,7 +19,7 @@ from utilities.security.cryptography import PubPvtKey
 PROJECT_PATH = settings.BASE_DIR
 
 def RunUserProcess(user, command):
-    payload = { 'command': command }
+    payload = { 'token': user.token, command': command }
     headers = { 'content-type': 'application/json' }
     r = requests.post(
         "http://%s" % settings.IMPERSONATOR['endpoint'],
@@ -42,7 +42,10 @@ def CreateTempDir(username):
 def ACLResponse(response):
     if response.startswith("ERROR:"):
         #remove the first 3 lines and convert to html by replacing newlines with <br/> and removing return carriages
-        response = '<br/>'.join(response.split('\n')[2:]).replace('\r', '')
+        response_lines = response.split('\n')[2:]
+        response = '<br/>'
+            .join(response_lines)
+            .replace('\r', '')
         return Response(response, status=400)
     else:
         return Response(response)
@@ -177,7 +180,7 @@ class FileDetail(APIView):
 
                 if not out.startswith("ERROR:\n\n"):
                     wrapper = FileWrapper(open(tmp_file, "rb"))
-                    response = HttpResponse(wrapper, content_type=type)
+                    response = HttpResponse(wrapper, content_type=content_type)
                     response['File-Modified'] = last_saved
                     response['Content-Length'] = os.path.getsize(tmp_file)
                     return response
